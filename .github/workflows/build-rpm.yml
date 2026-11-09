@@ -1,0 +1,99 @@
+name: Build Fedora RPM
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "intermux/**"
+      - "packaging/**"
+      - "intermux_linux.spec"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - ".github/workflows/build-rpm.yml"
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-rpm:
+    name: Build RPM (Fedora 44)
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Build inside Fedora 44
+        env:
+          IMAGE: fedora:44
+        run: |
+          mkdir -p dist-rpm
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src" \
+            -w /src \
+            "$IMAGE" bash -euc '
+              dnf -y install \
+                python3 python3-pip python3-tkinter \
+                rpm-build systemd-rpm-macros binutils \
+                desktop-file-utils appstream tar gzip
+              dnf clean all
+
+              VERSION="$(python3 -c '\''import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])'\'')"
+              echo "Building InterMux version $VERSION"
+
+              python3 -m compileall -q intermux tests
+              python3 -m unittest discover -s tests -t . -v
+
+              python3 -m venv /opt/pyinstaller-venv
+              /opt/pyinstaller-venv/bin/pip install --no-cache-dir "pyinstaller==6.20.0"
+              export PATH="/opt/pyinstaller-venv/bin:$PATH"
+
+              TOPDIR=/tmp/rpmbuild
+              mkdir -p "$TOPDIR"/{BUILD,BUILDROOT,RPMS,SOURCES,SPECS,SRPMS}
+              tar --exclude=.git --exclude=dist-rpm \
+                --transform="s,^,intermux-$VERSION/," \
+                -czf "$TOPDIR/SOURCES/intermux-$VERSION.tar.gz" .
+
+              sed "s/^Version:.*/Version:        $VERSION/" \
+                packaging/fedora/intermux.spec > "$TOPDIR/SPECS/intermux.spec"
+
+              rpmbuild -bb "$TOPDIR/SPECS/intermux.spec" \
+                --define "_topdir $TOPDIR"
+
+              find "$TOPDIR/RPMS" -type f -name "*.rpm" -exec cp -v {} dist-rpm/ \;
+              test -n "$(find dist-rpm -type f -name "*.rpm" -print -quit)"
+              rpm -qpi dist-rpm/*.rpm
+              cd dist-rpm
+              sha256sum *.rpm > SHA256SUMS
+            '
+
+      - name: Upload RPM artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: intermux-fedora-rpm
+          path: dist-rpm/*
+          if-no-files-found: error
+          retention-days: 30
+
+  attach-release:
+    name: Attach RPM to GitHub Release
+    if: github.event_name == 'release'
+    needs: build-rpm
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download RPM artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: intermux-fedora-rpm
+          path: dist-rpm
+
+      - name: Attach RPM to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist-rpm/*
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
