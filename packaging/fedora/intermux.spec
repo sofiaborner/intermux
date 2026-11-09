@@ -1,27 +1,18 @@
-# Built, installed and removed in a Fedora container with PyInstaller 6.20.0 from pip (see the note below
-# about python3-pyinstaller). Dependency names need checking against the target Fedora release.
+# Fedora RPM build; PyInstaller is supplied by the isolated build environment.
 %global debug_package %{nil}
 %global __os_install_post %{nil}
-# The bundle carries its own private libpython, libssl, libtk, ...: do not
-# publish them as Provides or derive Requires from them.
 %global __provides_exclude_from ^%{_prefix}/lib/intermux/.*$
 %global __requires_exclude_from ^%{_prefix}/lib/intermux/.*$
-
-# NOTE: python3-pyinstaller is NOT in the official Fedora/EPEL repositories;
-# this spec is only buildable from a COPR or private repo that provides it
-# (PyInstaller 6.20.0 is the verified version). Official Fedora also forbids
-# bundled-runtime packages.
 
 Name:           intermux
 Version:        2.1.0
 Release:        1%{?dist}
 Summary:        Bind individual applications to specific network interfaces
 License:        MIT
-URL:            https://github.com/Rishi-Bhati/intermux
-# Linux releases are tagged linux-v<version> (the plain v<version> tags are the Windows edition)
-Source0:        %{url}/archive/refs/tags/linux-v%{version}.tar.gz#/%{name}-%{version}.tar.gz
+URL:            https://github.com/sofiaborner/intermux
+Source0:        %{name}-%{version}.tar.gz
 
-BuildRequires:  python3-pyinstaller
+BuildRequires:  python3
 BuildRequires:  python3-tkinter
 BuildRequires:  systemd-rpm-macros
 BuildRequires:  binutils
@@ -36,7 +27,6 @@ Requires:       xdg-utils
 Requires:       hicolor-icon-theme
 Recommends:     nftables
 Recommends:     curl
-Provides:       bundled(python3)
 
 %description
 InterMux runs a chosen application inside its own network namespace and
@@ -46,13 +36,11 @@ Changing network configuration requires administrator authentication
 through polkit.
 
 %prep
-%autosetup -n %{name}-linux-v%{version}
+%autosetup -n %{name}-%{version}
 
 %build
-# Keep PyInstaller's cache in the build tree (mock has no usable $HOME)
 export PYINSTALLER_CONFIG_DIR="$PWD/pyi-config"
-pyinstaller intermux_linux.spec --noconfirm \
-    --distpath dist --workpath build
+pyinstaller intermux_linux.spec --noconfirm --distpath dist --workpath build
 
 %install
 install -d %{buildroot}/usr/lib/intermux
@@ -73,14 +61,11 @@ install -Dm644 packaging/linux/intermux.metainfo.xml \
     %{buildroot}%{_datadir}/metainfo/org.intermux.InterMux.metainfo.xml
 install -Dm644 packaging/linux/intermux-watch.service \
     %{buildroot}%{_unitdir}/intermux-watch.service
-# Preset so %systemd_post enables the watcher on install
 install -Dm644 packaging/linux/intermux-watch.preset \
     %{buildroot}%{_presetdir}/90-intermux.preset
 
 %check
 desktop-file-validate %{buildroot}%{_datadir}/applications/intermux.desktop
-# appstream-util (appstream-glib) rejects the stock icon name even when the icon is installed; appstreamcli
-# is the current validator and accepts it.
 appstreamcli validate --no-net \
     %{buildroot}%{_datadir}/metainfo/org.intermux.InterMux.metainfo.xml
 
@@ -100,7 +85,7 @@ appstreamcli validate --no-net \
 %files
 %license license
 /usr/lib/intermux/
-%{_bindir}/intermux
+/usr/bin/intermux
 %{_datadir}/polkit-1/actions/org.intermux.policy
 %{_datadir}/applications/intermux.desktop
 %{_datadir}/icons/hicolor/scalable/apps/intermux.svg
@@ -109,8 +94,5 @@ appstreamcli validate --no-net \
 %{_presetdir}/90-intermux.preset
 
 %changelog
-* Tue Nov 03 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.1.0-1
-- 2.1.0: new main window with tables and inline speed graphs; DNS per interface with custom servers; speed limits; VPN connections from the app; shifted apps keep DNS, reject IPv6 at once and accept replies under strict rp_filter; firewalld trusts each namespace link
-* Tue Oct 13 2026 Rishi-Bhati <bhatirishi5@gmail.com> - 2.0.1-1
-- 2.0.1: keep scanning Firefox profile roots past a symlinked one; security reports go to the Reportary portal
-- 2.0.0: initial packaging (starting point, untested)
+* Mon Nov 09 2026 InterMux contributors - 2.1.0-1
+- Prepare Fedora RPM builds through GitHub Actions.
